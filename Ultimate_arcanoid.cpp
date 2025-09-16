@@ -26,11 +26,14 @@ namespace GameConfig
     // Скорости мяча под горячими клавишами
     constexpr float BallSpeedSlow = 1.0f;  // при удержании S
     constexpr float BallSpeedFast = 90.0f; // при удержании Q
-    constexpr float BallSpeedNormal = 10.0f; // по умолчанию
+    constexpr float BallSpeedNormal = 20.0f; // по умолчанию
 
     // Параметры мяча
     constexpr float BallRadius = 25.0f;
     constexpr float BallInitialSpeed = 20.0f;
+
+    constexpr float balltraceRadius = 15.0f;
+
 
     // Размеры и скорость платформы
     constexpr float PlatformWidth = 300.0f;
@@ -41,9 +44,9 @@ namespace GameConfig
     // Сетка блоков
     constexpr int BlockWidth = 80;
     constexpr int BlockHeight = 40;
-    constexpr int BlocksPerRow = 8;
-    constexpr int BlockRows = 4;
-    constexpr int BlockGap = 10;
+    constexpr int BlocksPerRow = 1;
+    constexpr int BlockRows = 1;
+    constexpr int BlockGap = 1;
     constexpr int BlocksStartY = 100;
 }
 
@@ -139,6 +142,8 @@ public:
 
     float GetRadius() const { return radius; }
     float GetSpeed() const { return speed; }
+
+
     // Управление скоростью мяча горячими клавишами (S/Q/по умолчанию)
     void SlowBall()
     {
@@ -209,6 +214,25 @@ public:
 
 };
 
+//class TracePoint : public Sprite
+//{
+//    float x, y;
+//    /*void DrawView(HDC hdc, float viewX, float viewY, float viewScale) //Трассировка
+//    {
+//        GetDC()->SetPixel(x, y, RGB(1, 2, 3))
+//    }*/
+//    //int radius = 5;
+//    //TracePoint(float x = 0, float y = 0, float r = 10)
+//    //    : Sprite(x, y, r * 2, r * 2), radius(r)
+//    //{
+//    //}
+//    void Draw(HDC hdc)
+//    {
+//        SetPixel(hdc, x, y, RGB(1, 1, 1));
+//    }
+//};
+
+
 // Игровое окно (для HDC и размеров)
 
 struct GameWindow
@@ -224,23 +248,22 @@ struct GameWindow
     }
 };
 
-struct TracePoint {
-    float x, y;
-    bool collision;    // произойдет столкновение
-    float dx, dy;      // направление мяча на этом шаге
-};
 
+//const int TracePoints = 4;
+//int TracePoints[TracePoints];     // содержит 4 элемента
 
 // Глобальные объекты игры
 
 GameWindow window;
 PlayerPlatform player(0, 0, 0, 0);
 Ball ball(0, 0, 0);
+Ball balltrace(0, 0, 0);
+
 std::vector<Block> blocks; // Массив блоков вместо одного
 HBITMAP hBack;
 std::vector<POINT> ballTrace;
-const int TRACE_MAX = 100; // сколько точек хранить
-std::vector<TracePoint> ballTracePath;
+//std::vector<TracePoint> ballTracePath;
+bool ballactive = false;
 
 // Параметры вида (камера/зум)
 bool zoomMode = false;
@@ -306,6 +329,10 @@ void InitGame()
     player.SetSpeed(GameConfig::PlatformSpeedNormal);
     player.SetPosition(window.width / 2.0f, window.height - 120.0f);
 
+    //Трассировочная точка
+    balltrace.SetRadius(GameConfig::balltraceRadius);
+    balltrace.SetPosition(window.width / 2.0f, window.height - 120.0f);
+
     // Мяч
     ball.SetRadius(GameConfig::BallRadius);
     ball.SetSpeed(GameConfig::BallInitialSpeed);
@@ -349,9 +376,10 @@ void BallReset(Ball& ball)
     }
 }
 
-
 void CheckBallBlocksCollision(Ball& ball, std::vector<Block>& blocks)
 {
+    ballactive = true;
+
     float bx = ball.GetX();
     float by = ball.GetY();
     float r = ball.GetRadius();
@@ -401,12 +429,11 @@ void CheckBallBlocksCollision(Ball& ball, std::vector<Block>& blocks)
             }
 
             // Деактивируем блок
-            block.active = false;
+            /*block.active = false;*/
             break; // выходим после первого столкновения
         }
     }
 }
-
 
 void CheckBallPlatformCollision(Ball& ball, PlayerPlatform& platform)
 {
@@ -444,9 +471,38 @@ void CheckBallPlatformCollision(Ball& ball, PlayerPlatform& platform)
     }
 }
 
+void MouseMove(Ball& ball, std::vector<Block>& blocks)
+{
+    POINT mousePos;
+    if (GetCursorPos(&mousePos) && ballactive == true)
+    {
+       
+        ball.SetPosition(mousePos.x, mousePos.y);
+        balltrace.SetPosition(mousePos.x, mousePos.y);
+
+
+        float dx = balltrace.GetDX();
+        float dy = balltrace.GetDY();
+        float x = mousePos.x;
+        float y = mousePos.y;
+
+        for (int i = 0; i < 50; i++)
+        {
+            x += dx * 10;
+            y += dy * 10;
+
+            POINT p{ (LONG)x, (LONG)y };
+            ballTrace.push_back(p);
+        }
+
+        // Проверяем столкновения настоящего шара
+        CheckBallBlocksCollision(ball, blocks);
+    }
+}
+
+
 void BallStepMove(Ball& ball, float stepSize = 1.0f)
 {
-
     // Мяч двигается по маленьким шагам (sub-steps).
     // Это позволяет не "пролетать" сквозь платформу или блоки при большой скорости.
 
@@ -553,7 +609,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     InitWindow();
     InitGame();
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
-    ShowCursor(FALSE);
 
     while (!GetAsyncKeyState(VK_ESCAPE)) {
         // Очистка экрана
@@ -591,16 +646,17 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
             DeleteDC(memDC);
         }
 
-        //// Рисуем трассировку
-        //for (size_t i = 0; i < ballTracePath.size(); i++) {
-        //    int tx = static_cast<int>(ballTracePath[i].x);
-        //    int ty = static_cast<int>(ballTracePath[i].y);
-        //    SetPixel(window.buffer, tx, ty, RGB(0, 255, 0)); // зелёная точка
-        //}
-
         // Рисуем платформу, мяч и блоки с учётом вида
         player.DrawView(window.buffer, viewX, viewY, viewScale);
         ball.DrawView(window.buffer, viewX, viewY, viewScale);
+        balltrace.DrawView(window.buffer, viewX, viewY, viewScale);
+
+        // Рисуем трассировку
+        for (auto& p : ballTrace)
+        {
+            Ellipse(window.buffer, p.x - 2, p.y - 2, p.x + 2, p.y + 2);
+            // маленькие кружочки радиусом 2
+        }
 
         for (auto& block : blocks)
         {
@@ -608,7 +664,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
                 block.DrawView(window.buffer, viewX, viewY, viewScale);
             }
         }
-
 
         // Выводим на экран
         BitBlt(window.dc, 0, 0, window.width, window.height, window.buffer, 0, 0, SRCCOPY);
@@ -629,6 +684,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         // Проверяем столкновения
         CheckBallPlatformCollision(ball, player);
         CheckBallBlocksCollision(ball, blocks);
+        MouseMove(ball, blocks);
         Sleep(3); // ~60 FPS
     }
     return 0;
