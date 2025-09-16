@@ -11,6 +11,42 @@
 #include <ctime>   // time
 #include <wingdi.h> // для TransparentBlt
 
+// -----------------------------
+// Константы игры и управления
+// -----------------------------
+
+namespace GameConfig
+{
+    //constexpr (от constant expression) — это ключевое слово в C++, которое указывает, 
+    // что значение функции или переменной может быть вычислено на этапе компиляции.
+    // 
+    // Настройки камеры/зум-режима
+    constexpr float ZoomScale = 3.0f;     // во сколько раз увеличиваем при удержании W
+
+    // Скорости мяча под горячими клавишами
+    constexpr float BallSpeedSlow = 1.0f;  // при удержании S
+    constexpr float BallSpeedFast = 90.0f; // при удержании Q
+    constexpr float BallSpeedNormal = 10.0f; // по умолчанию
+
+    // Параметры мяча
+    constexpr float BallRadius = 25.0f;
+    constexpr float BallInitialSpeed = 20.0f;
+
+    // Размеры и скорость платформы
+    constexpr float PlatformWidth = 300.0f;
+    constexpr float PlatformHeight = 100.0f;
+    constexpr float PlatformSpeedNormal = 20.0f;
+    constexpr float PlatformSpeedFast = 40.0f; // при удержании Shift
+
+    // Сетка блоков
+    constexpr int BlockWidth = 80;
+    constexpr int BlockHeight = 40;
+    constexpr int BlocksPerRow = 8;
+    constexpr int BlockRows = 4;
+    constexpr int BlockGap = 10;
+    constexpr int BlocksStartY = 100;
+}
+
 // Базовый класс Sprite — всё, что умеет двигаться и рисоваться
 
 class Sprite
@@ -23,44 +59,53 @@ protected: //Ключевое слово Протектед - модификат
     HBITMAP hBitmap;     // Битмап для отрисовки
 
 public://Ключевое слово Паблик - модификатор доступа из любой части программы 
-        //Конструктор класса - специальная функция для создания объекта, чтобы инициализировать члены класса
+    //Конструктор класса - специальная функция для создания объекта, чтобы инициализировать члены класса
     Sprite(float x = 0, float y = 0, float w = 0, float h = 0)
         : x(x), y(y), width(w), height(h),
-        dx(0), dy(0), speed(0), hBitmap(nullptr) {
+        dx(0), dy(0), speed(0), hBitmap(nullptr)
+    {
     }
     //virtual нужен, чтобы если объект наследника (например Ball) удаляется через указатель на Sprite, 
     // вызывался деструктор наследника, а не только базового класса.
     virtual ~Sprite() {}
 
     // Обновление позиции
-    virtual void Move() 
+    virtual void Move()
     {
         x += dx * speed;
         y += dy * speed;
     }
-
-    // Отрисовка
-    void Draw(HDC hdc) 
+    // Отрисовка с учётом смещения и масштаба вида
+    void DrawView(HDC hdc, float viewX, float viewY, float viewScale)
     {
-        if (hBitmap) {
+        if (hBitmap)
+        {
             HDC memDC = CreateCompatibleDC(hdc);
             HBITMAP old = (HBITMAP)SelectObject(memDC, hBitmap);
 
             BITMAP bm;
             GetObject(hBitmap, sizeof(BITMAP), &bm);
 
-            // Рисуем с прозрачностью (белый = прозрачный)
+            int dstX = (int)((x - viewX) * viewScale);
+            int dstY = (int)((y - viewY) * viewScale);
+            int dstW = (int)(width * viewScale);
+            int dstH = (int)(height * viewScale);
+
             TransparentBlt(
-                hdc, (int)x, (int)y, (int)width, (int)height, // куда
-                memDC, 0, 0, bm.bmWidth, bm.bmHeight,         // откуда
-                RGB(255, 255, 255)                            // цвет прозрачности
+                hdc, dstX, dstY, dstW, dstH,
+                memDC, 0, 0, bm.bmWidth, bm.bmHeight,
+                RGB(255, 255, 255)
             );
 
             SelectObject(memDC, old);
             DeleteDC(memDC);
         }
         else {
-            Rectangle(hdc, (int)x, (int)y, (int)(x + width), (int)(y + height));
+            int dstX = (int)((x - viewX) * viewScale);
+            int dstY = (int)((y - viewY) * viewScale);
+            int dstW = (int)(width * viewScale);
+            int dstH = (int)(height * viewScale);
+            Rectangle(hdc, dstX, dstY, dstX + dstW, dstY + dstH);
         }
     }
 
@@ -85,6 +130,7 @@ class Ball : public Sprite
 {
     bool active;
     float radius;
+
 public:
     Ball(float x = 0, float y = 0, float r = 10)
         : Sprite(x, y, r * 2, r * 2), radius(r), active(true)
@@ -93,41 +139,41 @@ public:
 
     float GetRadius() const { return radius; }
     float GetSpeed() const { return speed; }
-    void StopSpeed()
+    // Управление скоростью мяча горячими клавишами (S/Q/по умолчанию)
+    void SlowBall()
     {
         if (GetAsyncKeyState('S') & 0x8000)
-            speed = 0;
+            speed = GameConfig::BallSpeedSlow;
+        //«Присвоить переменной speed значение BallSpeedSlow из пространства имён GameConfig»
+        else if (GetAsyncKeyState('Q') & 0x8000)
+            speed = GameConfig::BallSpeedFast;
         else
-            speed = 10;
+            speed = GameConfig::BallSpeedNormal;
     }
     void SetRadius(float r) { radius = r; width = r * 2; height = r * 2; }
 
-    // Переопределяем Draw, чтобы рисовать круг
-    void Draw(HDC hdc) {
+    // Переопределяем Draw, чтобы рисовать игровой шарик
+    void Draw(HDC hdc)
+    {
         Ellipse(hdc,
             (int)(x - radius),
             (int)(y - radius),
             (int)(x + radius),
             (int)(y + radius));
     }
-    float Clamp(float value, float minVal, float maxVal) {
-        if (value < minVal) return minVal;
-        if (value > maxVal) return maxVal;
-        return value;
-    }
-    // Функция для столкновения с прямоугольником
-    bool CheckCollisionRect(float rx, float ry, float rw, float rh) {
-        // ближайшая точка прямоугольника к центру круга
-        float closestX = Clamp(x, rx, rx + rw);
-        float closestY = Clamp(y, ry, ry + rh);
-
-        float dx = x - closestX;
-        float dy = y - closestY;
-
-        return (dx * dx + dy * dy) <= radius * radius;
+    // Отрисовка шара с учётом вида (смещения и масштаба)
+    void DrawView(HDC hdc, float viewX, float viewY, float viewScale)
+    {
+        float left = x - radius;
+        float top = y - radius;
+        float size = radius * 2.0f;
+        int l = (int)((left - viewX) * viewScale);
+        int t = (int)((top - viewY) * viewScale);
+        int r = l + (int)(size * viewScale);
+        int b = t + (int)(size * viewScale);
+        Ellipse(hdc, l, t, r, b);
     }
 };
-
 
 // Платформа игрока
 
@@ -139,41 +185,34 @@ public:
         : Sprite(x, y, w, h) {
     }
 
-
     void MoveLeft() { x -= speed; }
     void MoveRight() { x += speed; }
 
     // Метод обновления скорости
+    // Переключение скорости платформы: обычная или ускоренная при Shift
     void MoveShift(bool shiftPressed)
     {
-        if (shiftPressed)
-        {
-            // скорость от 30 до 60 это прикол такой
-            speed = 30.0f + static_cast<float>(std::rand() % 10);
-        }
-        else
-        {
-            speed = 20.0f;
-        }
+        speed = shiftPressed ? GameConfig::PlatformSpeedFast : GameConfig::PlatformSpeedNormal;
     }
 };
 
 // Кирпич (Block) — не наследуется, он статический объект
 
-// Исправлено:
-class Block : public Sprite {
+class Block : public Sprite
+{
 public:
     bool active;
 
     Block(int x = 0, int y = 0, int w = 40, int h = 20, COLORREF color = RGB(255, 0, 0))
         : Sprite(x, y, w, h), active(true) {
     }
-   
+
 };
 
 // Игровое окно (для HDC и размеров)
 
-struct GameWindow {
+struct GameWindow
+{
     HWND hWnd;
     HDC dc;
     HDC buffer;
@@ -185,6 +224,13 @@ struct GameWindow {
     }
 };
 
+struct TracePoint {
+    float x, y;
+    bool collision;    // произойдет столкновение
+    float dx, dy;      // направление мяча на этом шаге
+};
+
+
 // Глобальные объекты игры
 
 GameWindow window;
@@ -192,68 +238,106 @@ PlayerPlatform player(0, 0, 0, 0);
 Ball ball(0, 0, 0);
 std::vector<Block> blocks; // Массив блоков вместо одного
 HBITMAP hBack;
+std::vector<POINT> ballTrace;
+const int TRACE_MAX = 100; // сколько точек хранить
+std::vector<TracePoint> ballTracePath;
 
+// Параметры вида (камера/зум)
+bool zoomMode = false;
+float viewX = 0.0f;
+float viewY = 0.0f;
+float viewScale = 1.0f;
+const float zoomScale = GameConfig::ZoomScale; // масштаб при удержании W
 
+void UpdateView()
+{
+    zoomMode = (GetAsyncKeyState('W') & 0x8000) != 0;
+    if (zoomMode)
+    {
+        viewScale = zoomScale;
+        float visibleW = window.width / viewScale;
+        float visibleH = window.height / viewScale;
+        viewX = ball.GetX() - visibleW * 0.5f;
+        viewY = ball.GetY() - visibleH * 0.5f;
+        // Ограничение в пределах размера сцены (здесь = размер окна)
+        if (viewX < 0.0f) viewX = 0.0f;
+        if (viewY < 0.0f) viewY = 0.0f;
+        float maxVX = (float)window.width - visibleW;
+        float maxVY = (float)window.height - visibleH;
+        if (viewX > maxVX) viewX = maxVX;
+        if (viewY > maxVY) viewY = maxVY;
+    }
+    else
+    {
+        viewScale = 1.0f;
+        viewX = 0.0f;
+        viewY = 0.0f;
+    }
+}
+
+float RandomFloat(float a, float b)
+{
+    return a + static_cast<float>(rand()) / (RAND_MAX / (b - a));
+}
 
 // Инициализация игры
 
-void InitGame() 
+void InitGame()
 {
     // Загрузка картинок
     HBITMAP playerBmp = (HBITMAP)LoadImageA(NULL, "player_platform.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
     HBITMAP ballBmp = (HBITMAP)LoadImageA(NULL, "ball.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
     HBITMAP blockBmp = (HBITMAP)LoadImageA(NULL, "block.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
     hBack = (HBITMAP)LoadImageA(NULL, "forest_bg.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
-    
+
     // Проверяем загрузку и устанавливаем битмапы
-    if (playerBmp) 
+    if (playerBmp)
     {
         player.SetBitmap(playerBmp);
     }
-    if (ballBmp) 
+    if (ballBmp)
     {
         ball.SetBitmap(ballBmp);
     }
     // Битмап для блоков будет установлен при создании каждого блока
 
     // Платформа
-    player.SetSize(300.0f, 100.0f);
-    player.SetSpeed(15.0f);
+    player.SetSize(GameConfig::PlatformWidth, GameConfig::PlatformHeight);
+    player.SetSpeed(GameConfig::PlatformSpeedNormal);
     player.SetPosition(window.width / 2.0f, window.height - 120.0f);
 
     // Мяч
-    ball.SetRadius(25.0f);
-    ball.SetSpeed(20.0f);
+    ball.SetRadius(GameConfig::BallRadius);
+    ball.SetSpeed(GameConfig::BallInitialSpeed);
     ball.SetDirection(-1.0f, 1.0f);
     ball.SetPosition(window.width / 2.0f, window.height / 2.0f);
-    ball.StopSpeed();
 
     // Создаем массив блоков в виде сетки
     blocks.clear();
-    int blockWidth = 80;
-    int blockHeight = 40;
-    int blocksPerRow = 8;
-    int rows = 4;
-    int startX = (window.width - (blocksPerRow * blockWidth + (blocksPerRow - 1) * 10)) / 2; // центрируем
-    int startY = 100;
-    
+    int blockWidth = GameConfig::BlockWidth;
+    int blockHeight = GameConfig::BlockHeight;
+    int blocksPerRow = GameConfig::BlocksPerRow;
+    int rows = GameConfig::BlockRows;
+    int startX = (window.width - (blocksPerRow * blockWidth + (blocksPerRow - 1) * GameConfig::BlockGap)) / 2; // центрируем
+    int startY = GameConfig::BlocksStartY;
+
     for (int row = 0; row < rows; row++) {
         for (int col = 0; col < blocksPerRow; col++) {
             Block newBlock;
             newBlock.SetSize(blockWidth, blockHeight);
-            newBlock.SetPosition(startX + col * (blockWidth + 10), startY + row * (blockHeight + 10));
+            newBlock.SetPosition(startX + col * (blockWidth + GameConfig::BlockGap), startY + row * (blockHeight + GameConfig::BlockGap));
             newBlock.active = true;
-            
+
             // Устанавливаем битмап для блока, если он загружен
             if (blockBmp) {
                 newBlock.SetBitmap(blockBmp);
             }
-            
+
             blocks.push_back(newBlock);
         }
     }
 
-   
+
 }
 // Функция проверки столкновения мяча с платформой
 // Движение мяча с отражениями
@@ -265,116 +349,179 @@ void BallReset(Ball& ball)
     }
 }
 
-void BallMove(Ball& ball) {
-    ball.Move();
-
-    float r = ball.GetRadius();
-
-    // Отражение от стен
-    if (ball.GetX() - r <= 0) { ball.SetDirection(-ball.GetDX(), ball.GetDY()); ball.SetPosition(r, ball.GetY()); }
-    if (ball.GetX() + r >= window.width) { ball.SetDirection(-ball.GetDX(), ball.GetDY()); ball.SetPosition(window.width - r, ball.GetY()); }
-    if (ball.GetY() - r <= 0) { ball.SetDirection(ball.GetDX(), -ball.GetDY()); ball.SetPosition(ball.GetX(), r); }
-
-    // Отражение от платформы
-    float px = player.GetX(), py = player.GetY(), pw = player.GetW(), ph = player.GetH();
-    if (ball.CheckCollisionRect(px, py, pw, ph)) {
-        // устанавливаем мяч над платформой
-        ball.SetPosition(ball.GetX(), py - r);
-        // угол отскока по X
-        float hitPos = (ball.GetX() - px) / pw; // 0-1
-        float newDX = (hitPos - 0.5f) * 2.0f;
-        float newDY = -fabs(ball.GetDY());
-        float len = sqrt(newDX * newDX + newDY * newDY);
-        ball.SetDirection(newDX / len, newDY / len);
-    }
-
-    // Столкновение с блоками
-    for (auto& block : blocks) {
-        if (!block.active) continue;
-        if (ball.CheckCollisionRect(block.GetX(), block.GetY(), block.GetW(), block.GetH())) {
-            block.active = false;
-            // простое отражение по Y
-            ball.SetDirection(ball.GetDX(), -ball.GetDY());
-            break;
-        }
-    }
-
-    // Мяч упал вниз
-    if (ball.GetY() - r >= window.height) {
-        ball.SetPosition(window.width / 2.0f, window.height / 2.0f);
-        float randomDX = (rand() % 100) / 100.0f;
-        if (rand() % 2 == 0) randomDX = -randomDX;
-        ball.SetDirection(randomDX, 1.0f);
-    }
-}
 
 void CheckBallBlocksCollision(Ball& ball, std::vector<Block>& blocks)
 {
-    float bax = ball.GetX();
-    float bay = ball.GetY();
-    float baw = ball.GetW();
-    float bah = ball.GetH();
+    float bx = ball.GetX();
+    float by = ball.GetY();
+    float r = ball.GetRadius();
 
-    for (auto& block : blocks) {
+    for (auto& block : blocks)
+    {
         if (!block.active) continue; // пропускаем неактивные блоки
-        
+
         float blx = block.GetX();
         float bly = block.GetY();
         float blw = block.GetW();
         float blh = block.GetH();
 
-        if (bax + baw >= blx && bax <= blx + blw &&
-            bay + bah >= bly && bay <= bly + blh)
+        // Проверяем столкновение с учётом радиуса мяча
+        bool collisionX = (bx + r >= blx) && (bx - r <= blx + blw);
+        bool collisionY = (by + r >= bly) && (by - r <= bly + blh);
+
+        if (collisionX && collisionY)
         {
-            // Определяем, с какой стороны произошло столкновение
-            float ballCenterX = bax + baw / 2;
-            float ballCenterY = bay + bah / 2;
-            float blockCenterX = blx + blw / 2;
-            float blockCenterY = bly + blh / 2;
-            
+            // Определяем центр мяча и центра блока
+            float ballCenterX = bx;
+            float ballCenterY = by;
+
+            float blockCenterX = blx + blw / 2.0f;
+            float blockCenterY = bly + blh / 2.0f;
+
             float deltaX = ballCenterX - blockCenterX;
             float deltaY = ballCenterY - blockCenterY;
-            
-            // Если столкновение больше по горизонтали - отскок по вертикали
-            if (abs(deltaX) > abs(deltaY)) {
-                ball.SetDirection(-ball.GetDX(), ball.GetDY()); // меняем X
-            } else {
-                ball.SetDirection(ball.GetDX(), -ball.GetDY()); // меняем Y
+
+            // Определяем сторону столкновения и корректируем позицию
+            if (abs(deltaX) > abs(deltaY))
+            {
+                // столкновение по горизонтали — отражаем X
+                ball.SetDirection(-ball.GetDX(), ball.GetDY());
+                if (deltaX > 0)
+                    ball.SetPosition(blx + blw + r, by); // справа
+                else
+                    ball.SetPosition(blx - r, by);       // слева
             }
-            
-            // Уничтожаем блок
+            else {
+                // столкновение по вертикали — отражаем Y
+                ball.SetDirection(ball.GetDX(), -ball.GetDY());
+                if (deltaY > 0)
+                    ball.SetPosition(bx, bly + blh + r); // снизу
+                else
+                    ball.SetPosition(bx, bly - r);       // сверху
+            }
+
+            // Деактивируем блок
             block.active = false;
-            break; // выходим из цикла после первого столкновения
+            break; // выходим после первого столкновения
         }
     }
 }
+
 
 void CheckBallPlatformCollision(Ball& ball, PlayerPlatform& platform)
 {
     float px = platform.GetX();
     float py = platform.GetY();
     float pw = platform.GetW();
-    float ph = platform.GetH();
+    //float ph = platform.GetH(); // ph не нужен для верхней стены
 
-    float bx = ball.GetX();
+    float bx = ball.GetX(); // центр мяча
     float by = ball.GetY();
-    float bw = ball.GetW();
-    float bh = ball.GetH();
+    float r = ball.GetRadius();
 
-    if (bx + bw >= px && bx <= px + pw &&
-        by + bh >= py && by <= py + ph)
+    // условие: нижняя точка мяча коснулась или прошла через верх платформы,
+    // и центр мяча сверху платформы (чтобы не ловить столкновения снизу).
+    if ((by + r >= py) && (by - r < py) && (bx + r >= px) && (bx - r <= px + pw))
     {
-        // ставим мяч прямо над платформой
-        ball.SetPosition(bx, py - bh);
+        // вычисляем относительное попадание по X (0..1)
+        float hitRelative = (bx - px) / pw;
+        if (hitRelative < 0.0f) hitRelative = 0.0f;
+        if (hitRelative > 1.0f) hitRelative = 1.0f;
 
-        // меняем направление по вертикали
-        ball.SetDirection(ball.GetDX(), -abs(ball.GetDY()));
+        // угол отскока: от -60 до +60 градусов (в радианах)
+        float angleDeg = (hitRelative - 0.5f) * 120.0f;// 0.0 (левый край) до 1.0 (правый край)
+        float rad = angleDeg * 3.14159265f / 180.0f; // -60° до +60°
+        /*Чем ближе к краю - больше угол
+         Центр платформы → вертикальный отскок
+        новая направляющая (dx, dy), dy должно быть отрицательным — вверх*/
+        float ndx = sinf(rad);
+        float ndy = -cosf(rad);
+
+        // нормализуем (чтобы сохранять постоянную скорость)
+        float len = sqrtf(ndx * ndx + ndy * ndy);
+        if (len < 1e-6f) len = 1.0f;
+        ball.SetDirection(ndx / len, ndy / len);
+    }
+}
+
+void BallStepMove(Ball& ball, float stepSize = 1.0f)
+{
+
+    // Мяч двигается по маленьким шагам (sub-steps).
+    // Это позволяет не "пролетать" сквозь платформу или блоки при большой скорости.
+
+        // Сколько всего пикселей нужно пройти за кадр (скорость шара)
+    float totalMove = ball.GetSpeed();
+
+    // Текущее направление движения шара
+    float dx = ball.GetDX();
+    float dy = ball.GetDY();
+
+    // Считаем, сколько маленьких шагов нужно сделать
+    // Например: скорость 10, шаг 1 → будет 10 проверок
+    int steps = static_cast<int>(ceil(totalMove / stepSize));
+    //количество шагов = общая дистанция / размер одного шага
+    //Функция ceil(x) = округление вверх до ближайшего целого. И оно возвращает double,
+    //оператор Static_cast преобразует его в int
+
+    for (int i = 0; i < steps; i++)
+    {
+        // Двигаем мяч на один маленький шаг
+        ball.SetPosition
+        (
+            ball.GetX() + dx * stepSize,
+            ball.GetY() + dy * stepSize
+        );
+
+        // Проверяем столкновения на этом шаге
+        // Если мяч коснётся платформы или блока — тут же обработаем
+        CheckBallPlatformCollision(ball, player);
+        CheckBallBlocksCollision(ball, blocks);
+
+        // Проверка выхода за стены окна
+        float bx = ball.GetX();    // центр мяча по X
+        float by = ball.GetY();    // центр мяча по Y
+        float r = ball.GetRadius();// радиус мяча
+
+        // Столкновение с левой стенкой
+        if (bx - r <= 0.0f) {
+            ball.SetPosition(r, by); // возвращаем мяч внутрь
+            ball.SetDirection(fabs(dx), dy); // отражаем по X вправо
+        }
+
+        // Столкновение с правой стенкой
+        if (bx + r >= window.width) {
+            ball.SetPosition(window.width - r, by); // возвращаем внутрь
+            ball.SetDirection(-fabs(dx), dy); // отражаем по X влево
+        }
+
+        // Столкновение с верхней стенкой
+        if (by - r <= 0.0f) {
+            ball.SetPosition(bx, r); // возвращаем внутрь
+            ball.SetDirection(dx, fabs(dy)); // отражаем по Y вниз
+        }
+
+        // "Проигрыш": мяч улетел за нижнюю границу
+        if (by + r >= window.height) {
+            // Сбрасываем мяч в центр
+            ball.SetPosition(window.width / 2.0f, window.height / 2.0f);
+
+            // Генерируем случайное направление вниз
+            float randomDX = RandomFloat(-0.7f, 0.7f);
+            float len = sqrtf(randomDX * randomDX + 1.0f);
+            ball.SetDirection(randomDX / len, 1.0f / len);
+        }
+
+        // Обновляем dx и dy, потому что мяч мог отразиться
+        dx = ball.GetDX();
+        dy = ball.GetDY();
     }
 }
 
 // Ограничение платформы
 
-void LimitPlatform() {
+void LimitPlatform()
+{
     if (player.GetX() < 0) player.SetPosition(0, player.GetY());
     if (player.GetX() + player.GetW() > window.width)
         player.SetPosition(window.width - player.GetW(), player.GetY());
@@ -405,53 +552,81 @@ int main() {
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     InitWindow();
     InitGame();
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
     ShowCursor(FALSE);
 
     while (!GetAsyncKeyState(VK_ESCAPE)) {
         // Очистка экрана
         PatBlt(window.buffer, 0, 0, window.width, window.height, BLACKNESS);
 
+        // Обновляем вид (камера/зум)
+        UpdateView();
+
         // Рисуем фон
         if (hBack) {
             HDC memDC = CreateCompatibleDC(window.buffer);
             HBITMAP old = (HBITMAP)SelectObject(memDC, hBack);
             BITMAP bm; GetObject(hBack, sizeof(BITMAP), &bm);
-            StretchBlt(window.buffer, 0, 0, window.width, window.height,
-                memDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+            if (zoomMode)
+            {
+                // Вырезаем из фоновой текстуры область под камеру и растягиваем на окно
+                int srcX = (int)viewX;
+                int srcY = (int)viewY;
+                int srcW = (int)(window.width / viewScale);
+                int srcH = (int)(window.height / viewScale);
+                // Подстрахуем рамки в пределах текстуры
+                if (srcX < 0) srcX = 0;
+                if (srcY < 0) srcY = 0;
+                if (srcX + srcW > bm.bmWidth) srcX = bm.bmWidth - srcW;
+                if (srcY + srcH > bm.bmHeight) srcY = bm.bmHeight - srcH;
+                StretchBlt(window.buffer, 0, 0, window.width, window.height,
+                    memDC, srcX, srcY, srcW, srcH, SRCCOPY);
+            }
+            else
+            {
+                StretchBlt(window.buffer, 0, 0, window.width, window.height,
+                    memDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+            }
             SelectObject(memDC, old);
             DeleteDC(memDC);
         }
-        // Рисуем платформу и мяч
-        player.Draw(window.buffer);
-        ball.Draw(window.buffer);
-        
-        // Рисуем все активные блоки
-        for (auto& block : blocks) 
+
+        //// Рисуем трассировку
+        //for (size_t i = 0; i < ballTracePath.size(); i++) {
+        //    int tx = static_cast<int>(ballTracePath[i].x);
+        //    int ty = static_cast<int>(ballTracePath[i].y);
+        //    SetPixel(window.buffer, tx, ty, RGB(0, 255, 0)); // зелёная точка
+        //}
+
+        // Рисуем платформу, мяч и блоки с учётом вида
+        player.DrawView(window.buffer, viewX, viewY, viewScale);
+        ball.DrawView(window.buffer, viewX, viewY, viewScale);
+
+        for (auto& block : blocks)
         {
             if (block.active) {
-                block.Draw(window.buffer);
+                block.DrawView(window.buffer, viewX, viewY, viewScale);
             }
         }
-       
-        
+
+
         // Выводим на экран
         BitBlt(window.dc, 0, 0, window.width, window.height, window.buffer, 0, 0, SRCCOPY);
 
-        // Сначала двигаем платформу
+        // Обновляем управление платформой
         bool shift = GetAsyncKeyState(VK_LSHIFT) & 0x8000;
         player.MoveShift(shift);
         if (GetAsyncKeyState('A') & 0x8000) player.MoveLeft();
         if (GetAsyncKeyState('D') & 0x8000) player.MoveRight();
 
-        // Обновляем платформу
-        /*player.Update();*/
+        // Граничные условия платформы
         LimitPlatform();
 
-        // Двигаем мяч
-        BallMove(ball);
+        // Двигаем мяч дискретными шагами (предотвращает пролет сквозь объекты)
+        BallStepMove(ball);
         BallReset(ball);
-        ball.StopSpeed();
-        // Проверяем столкновение с платформой
+        ball.SlowBall();
+        // Проверяем столкновения
         CheckBallPlatformCollision(ball, player);
         CheckBallBlocksCollision(ball, blocks);
         Sleep(3); // ~60 FPS
