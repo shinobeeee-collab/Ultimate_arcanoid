@@ -1,12 +1,15 @@
 ﻿// Настройки линкера:
 // Подсистема: Windows (/SUBSYSTEM:WINDOWS)
 // Дополнительные зависимости: Msimg32.lib; Winmm.lib
+#pragma comment(lib, "Msimg32.lib")
 
 #include <windows.h>
 #include <vector>
 #include <cmath>
 #include <algorithm>
 #include <cstdlib> // для rand()
+#include <ctime>   // time
+#include <wingdi.h> // для TransparentBlt
 
 // Базовый класс Sprite — всё, что умеет двигаться и рисоваться
 
@@ -37,15 +40,21 @@ public://Ключевое слово Паблик - модификатор до�
     }
 
     // Отрисовка
-    virtual void Draw(HDC hdc) {
+    void Draw(HDC hdc) 
+    {
         if (hBitmap) {
             HDC memDC = CreateCompatibleDC(hdc);
             HBITMAP old = (HBITMAP)SelectObject(memDC, hBitmap);
 
             BITMAP bm;
             GetObject(hBitmap, sizeof(BITMAP), &bm);
-            StretchBlt(hdc, (int)x, (int)y, (int)width, (int)height,
-                memDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+
+            // Рисуем с прозрачностью (белый = прозрачный)
+            TransparentBlt(
+                hdc, (int)x, (int)y, (int)width, (int)height, // куда
+                memDC, 0, 0, bm.bmWidth, bm.bmHeight,         // откуда
+                RGB(255, 255, 255)                            // цвет прозрачности
+            );
 
             SelectObject(memDC, old);
             DeleteDC(memDC);
@@ -74,22 +83,56 @@ public://Ключевое слово Паблик - модификатор до�
 
 class Ball : public Sprite
 {
+    bool active;
     float radius;
 public:
     Ball(float x = 0, float y = 0, float r = 10)
-        : Sprite(x, y, r * 2, r * 2), radius(r) {
+        : Sprite(x, y, r * 2, r * 2), radius(r), active(true)
+    {
     }
 
     float GetRadius() const { return radius; }
-    float GetSpeed()  const { return speed; }
+    float GetSpeed() const { return speed; }
+    void StopSpeed()
+    {
+        if (GetAsyncKeyState('S') & 0x8000)
+            speed = 0;
+        else
+            speed = 10;
+    }
     void SetRadius(float r) { radius = r; width = r * 2; height = r * 2; }
+
+    // Переопределяем Draw, чтобы рисовать круг
+    void Draw(HDC hdc) {
+        Ellipse(hdc,
+            (int)(x - radius),
+            (int)(y - radius),
+            (int)(x + radius),
+            (int)(y + radius));
+    }
+    float Clamp(float value, float minVal, float maxVal) {
+        if (value < minVal) return minVal;
+        if (value > maxVal) return maxVal;
+        return value;
+    }
+    // Функция для столкновения с прямоугольником
+    bool CheckCollisionRect(float rx, float ry, float rw, float rh) {
+        // ближайшая точка прямоугольника к центру круга
+        float closestX = Clamp(x, rx, rx + rw);
+        float closestY = Clamp(y, ry, ry + rh);
+
+        float dx = x - closestX;
+        float dy = y - closestY;
+
+        return (dx * dx + dy * dy) <= radius * radius;
+    }
 };
+
 
 // Платформа игрока
 
 class PlayerPlatform : public Sprite
 {
-    float baseSpeed;  // постоянная базовая скорость
 
 public:
     PlayerPlatform(float x = 0, float y = 0, float w = 100, float h = 20)
@@ -103,30 +146,29 @@ public:
     // Метод обновления скорости
     void MoveShift(bool shiftPressed)
     {
-        speed = shiftPressed ? 50.0f : 20.0f; // 
+        if (shiftPressed)
+        {
+            // скорость от 30 до 60 это прикол такой
+            speed = 30.0f + static_cast<float>(std::rand() % 10);
+        }
+        else
+        {
+            speed = 20.0f;
+        }
     }
 };
 
 // Кирпич (Block) — не наследуется, он статический объект
 
-class Block {
+// Исправлено:
+class Block : public Sprite {
 public:
-    int x, y, w, h;
-    COLORREF color;
     bool active;
 
-    Block(int x = 0, int y = 0, int w = 40, int h = 20, COLORREF c = RGB(0, 255, 0))
-        : x(x), y(y), w(w), h(h), color(c), active(true) {
+    Block(int x = 0, int y = 0, int w = 40, int h = 20, COLORREF color = RGB(255, 0, 0))
+        : Sprite(x, y, w, h), active(true) {
     }
-
-    void Draw(HDC hdc) {
-        if (!active) return;
-        HBRUSH brush = CreateSolidBrush(color);
-        HBRUSH old = (HBRUSH)SelectObject(hdc, brush);
-        Rectangle(hdc, x, y, x + w, y + h);
-        SelectObject(hdc, old);
-        DeleteObject(brush);
-    }
+   
 };
 
 // Игровое окно (для HDC и размеров)
@@ -146,28 +188,33 @@ struct GameWindow {
 // Глобальные объекты игры
 
 GameWindow window;
-PlayerPlatform player(0, 0, 100, 20);
-Ball ball(0, 0, 10);
-std::vector<Block> blocks;
-const int BLOCK_ROWS = 5;
-const int BLOCK_COLS = 10;
+PlayerPlatform player(0, 0, 0, 0);
+Ball ball(0, 0, 0);
+std::vector<Block> blocks; // Массив блоков вместо одного
 HBITMAP hBack;
+
+
 
 // Инициализация игры
 
-void InitGame() {
+void InitGame() 
+{
     // Загрузка картинок
     HBITMAP playerBmp = (HBITMAP)LoadImageA(NULL, "player_platform.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
     HBITMAP ballBmp = (HBITMAP)LoadImageA(NULL, "ball.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+    HBITMAP blockBmp = (HBITMAP)LoadImageA(NULL, "block.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
     hBack = (HBITMAP)LoadImageA(NULL, "forest_bg.bmp", IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
     
     // Проверяем загрузку и устанавливаем битмапы
-    if (playerBmp) {
+    if (playerBmp) 
+    {
         player.SetBitmap(playerBmp);
     }
-    if (ballBmp) {
+    if (ballBmp) 
+    {
         ball.SetBitmap(ballBmp);
     }
+    // Битмап для блоков будет установлен при создании каждого блока
 
     // Платформа
     player.SetSize(300.0f, 100.0f);
@@ -179,43 +226,126 @@ void InitGame() {
     ball.SetSpeed(20.0f);
     ball.SetDirection(-1.0f, 1.0f);
     ball.SetPosition(window.width / 2.0f, window.height / 2.0f);
+    ball.StopSpeed();
 
-    // Блоки
-    int blockW = window.width / BLOCK_COLS;
-    int blockH = 30;
-
-    for (int r = 0; r < BLOCK_ROWS; r++) {
-        for (int c = 0; c < BLOCK_COLS; c++) {
-            COLORREF col = RGB(50 * r, 20 * c, 100);
-            blocks.emplace_back(c * blockW, r * blockH + 50,
-                blockW - 4, blockH - 4, col);
+    // Создаем массив блоков в виде сетки
+    blocks.clear();
+    int blockWidth = 80;
+    int blockHeight = 40;
+    int blocksPerRow = 8;
+    int rows = 4;
+    int startX = (window.width - (blocksPerRow * blockWidth + (blocksPerRow - 1) * 10)) / 2; // центрируем
+    int startY = 100;
+    
+    for (int row = 0; row < rows; row++) {
+        for (int col = 0; col < blocksPerRow; col++) {
+            Block newBlock;
+            newBlock.SetSize(blockWidth, blockHeight);
+            newBlock.SetPosition(startX + col * (blockWidth + 10), startY + row * (blockHeight + 10));
+            newBlock.active = true;
+            
+            // Устанавливаем битмап для блока, если он загружен
+            if (blockBmp) {
+                newBlock.SetBitmap(blockBmp);
+            }
+            
+            blocks.push_back(newBlock);
         }
+    }
+
+   
+}
+// Функция проверки столкновения мяча с платформой
+// Движение мяча с отражениями
+void BallReset(Ball& ball)
+{
+    if (GetAsyncKeyState('R') & 0x8000)
+    {
+        ball.SetPosition(window.width / 2.0f, window.height / 2.0f);
     }
 }
 
-// Функция проверки столкновения мяча с платформой
-// Движение мяча с отражениями
 void BallMove(Ball& ball) {
     ball.Move();
 
+    float r = ball.GetRadius();
+
     // Отражение от стен
-    if (ball.GetX() <= 0) ball.SetDirection(abs(ball.GetDX()), ball.GetDY());
-    if (ball.GetX() + ball.GetW() >= window.width) ball.SetDirection(-abs(ball.GetDX()), ball.GetDY());
-    if (ball.GetY() <= 0) ball.SetDirection(ball.GetDX(), abs(ball.GetDY()));
+    if (ball.GetX() - r <= 0) { ball.SetDirection(-ball.GetDX(), ball.GetDY()); ball.SetPosition(r, ball.GetY()); }
+    if (ball.GetX() + r >= window.width) { ball.SetDirection(-ball.GetDX(), ball.GetDY()); ball.SetPosition(window.width - r, ball.GetY()); }
+    if (ball.GetY() - r <= 0) { ball.SetDirection(ball.GetDX(), -ball.GetDY()); ball.SetPosition(ball.GetX(), r); }
 
     // Отражение от платформы
     float px = player.GetX(), py = player.GetY(), pw = player.GetW(), ph = player.GetH();
-    float bx = ball.GetX(), by = ball.GetY(), bw = ball.GetW(), bh = ball.GetH();
-    if (bx + bw >= px && bx <= px + pw && by + bh >= py && by <= py + ph) {
-        ball.SetPosition(bx, py - bh);
-        ball.SetDirection(ball.GetDX(), -abs(ball.GetDY()));
+    if (ball.CheckCollisionRect(px, py, pw, ph)) {
+        // устанавливаем мяч над платформой
+        ball.SetPosition(ball.GetX(), py - r);
+        // угол отскока по X
+        float hitPos = (ball.GetX() - px) / pw; // 0-1
+        float newDX = (hitPos - 0.5f) * 2.0f;
+        float newDY = -fabs(ball.GetDY());
+        float len = sqrt(newDX * newDX + newDY * newDY);
+        ball.SetDirection(newDX / len, newDY / len);
     }
 
-    // Отражение от нижнего края
-    if (ball.GetY() + ball.GetH() >= window.height) {
-        // Reset ball
+    // Столкновение с блоками
+    for (auto& block : blocks) {
+        if (!block.active) continue;
+        if (ball.CheckCollisionRect(block.GetX(), block.GetY(), block.GetW(), block.GetH())) {
+            block.active = false;
+            // простое отражение по Y
+            ball.SetDirection(ball.GetDX(), -ball.GetDY());
+            break;
+        }
+    }
+
+    // Мяч упал вниз
+    if (ball.GetY() - r >= window.height) {
         ball.SetPosition(window.width / 2.0f, window.height / 2.0f);
-        ball.SetDirection(0.0f, 0.0f);
+        float randomDX = (rand() % 100) / 100.0f;
+        if (rand() % 2 == 0) randomDX = -randomDX;
+        ball.SetDirection(randomDX, 1.0f);
+    }
+}
+
+void CheckBallBlocksCollision(Ball& ball, std::vector<Block>& blocks)
+{
+    float bax = ball.GetX();
+    float bay = ball.GetY();
+    float baw = ball.GetW();
+    float bah = ball.GetH();
+
+    for (auto& block : blocks) {
+        if (!block.active) continue; // пропускаем неактивные блоки
+        
+        float blx = block.GetX();
+        float bly = block.GetY();
+        float blw = block.GetW();
+        float blh = block.GetH();
+
+        if (bax + baw >= blx && bax <= blx + blw &&
+            bay + bah >= bly && bay <= bly + blh)
+        {
+            // Определяем, с какой стороны произошло столкновение
+            float ballCenterX = bax + baw / 2;
+            float ballCenterY = bay + bah / 2;
+            float blockCenterX = blx + blw / 2;
+            float blockCenterY = bly + blh / 2;
+            
+            float deltaX = ballCenterX - blockCenterX;
+            float deltaY = ballCenterY - blockCenterY;
+            
+            // Если столкновение больше по горизонтали - отскок по вертикали
+            if (abs(deltaX) > abs(deltaY)) {
+                ball.SetDirection(-ball.GetDX(), ball.GetDY()); // меняем X
+            } else {
+                ball.SetDirection(ball.GetDX(), -ball.GetDY()); // меняем Y
+            }
+            
+            // Уничтожаем блок
+            block.active = false;
+            break; // выходим из цикла после первого столкновения
+        }
     }
 }
 
@@ -250,7 +380,6 @@ void LimitPlatform() {
         player.SetPosition(window.width - player.GetW(), player.GetY());
 }
 
-// Инициализация окна
 
 void InitWindow() {
     SetProcessDPIAware();
@@ -267,7 +396,7 @@ void InitWindow() {
     SelectObject(window.buffer, CreateCompatibleBitmap(window.dc, window.width, window.height));
 }
 
-// Точка входа (без неё не работает)
+// Точка входа
 
 int main() {
     return wWinMain(GetModuleHandle(nullptr), nullptr, nullptr, SW_SHOW);
@@ -292,14 +421,19 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
             SelectObject(memDC, old);
             DeleteDC(memDC);
         }
-
-        // Рисуем блоки
-        for (auto& b : blocks) b.Draw(window.buffer);
-
         // Рисуем платформу и мяч
         player.Draw(window.buffer);
         ball.Draw(window.buffer);
-
+        
+        // Рисуем все активные блоки
+        for (auto& block : blocks) 
+        {
+            if (block.active) {
+                block.Draw(window.buffer);
+            }
+        }
+       
+        
         // Выводим на экран
         BitBlt(window.dc, 0, 0, window.width, window.height, window.buffer, 0, 0, SRCCOPY);
 
@@ -315,11 +449,12 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
         // Двигаем мяч
         BallMove(ball);
-
+        BallReset(ball);
+        ball.StopSpeed();
         // Проверяем столкновение с платформой
         CheckBallPlatformCollision(ball, player);
-
-        Sleep(16); // ~60 FPS
+        CheckBallBlocksCollision(ball, blocks);
+        Sleep(3); // ~60 FPS
     }
     return 0;
 }

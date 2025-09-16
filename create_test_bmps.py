@@ -29,3 +29,4 @@ print("Созданы тестовые BMP файлы:")
 print("- player_platform.bmp (синяя платформа)")
 print("- ball.bmp (красный мяч)")
 print("- forest_bg.bmp (зеленый фон)")
+
